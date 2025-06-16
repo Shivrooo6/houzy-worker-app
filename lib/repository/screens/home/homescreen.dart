@@ -1,7 +1,9 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+import 'package:permission_handler/permission_handler.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -11,299 +13,114 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String _location = "";
-  final TextEditingController _searchController = TextEditingController();
-  bool _locationFetched = false;
+  final ImagePicker _picker = ImagePicker();
+  File? _image;
 
-  Future<void> _getCurrentLocation() async {
-    bool serviceEnabled;
-    LocationPermission permission;
+  Future<void> _pickImage(String source, String houseId) async {
+    PermissionStatus cameraPermission = await Permission.camera.request();
+    PermissionStatus storagePermission = await Permission.photos.request();
 
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      await Geolocator.openLocationSettings();
-      return;
-    }
+    if (cameraPermission.isGranted && storagePermission.isGranted) {
+      final pickedFile = await _picker.pickImage(
+          source: source == 'camera' ? ImageSource.camera : ImageSource.gallery);
 
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        return;
+      if (pickedFile != null) {
+        setState(() {
+          _image = File(pickedFile.path);
+        });
+        await _uploadToImageKit(File(pickedFile.path), houseId);
       }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Permissions not granted")),
+      );
     }
-
-    if (permission == LocationPermission.deniedForever) {
-      await Geolocator.openAppSettings();
-      return;
-    }
-
-    final position = await Geolocator.getCurrentPosition();
-    final placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
-    final Placemark place = placemarks[0];
-
-    setState(() {
-      _location = "${place.locality}, ${place.administrativeArea}";
-      _locationFetched = true;
-    });
   }
 
-  final List<Map<String, dynamic>> testimonials = [
-    {"name": "Mike Chen", "text": "Love the convenience and quality. They work around my schedule perfectly.", "stars": 5},
-    {"name": "Emily Davis", "text": "The deep cleaning was incredible. Every corner of my home sparkles now!", "stars": 4},
-    {"name": "Emily Davis", "text": "The deep cleaning was incredible. Every corner of my home sparkles now!", "stars": 4},
-    {"name": "Emily Davis", "text": "The deep cleaning was incredible. Every corner of my home sparkles now!", "stars": 4},
-    {"name": "Emily Davis", "text": "The deep cleaning was incredible. Every corner of my home sparkles now!", "stars": 3},
-  ];
+  Future<void> _uploadToImageKit(File image, String houseId) async {
+    const String uploadUrl = 'https://upload.imagekit.io/api/v1/files/upload';
+    const String publicKey = 'your_imagekit_public_api_key';
+    const String privateKey = 'your_imagekit_private_api_key_base64_encoded';
 
-  Widget _buildTopHeader(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+    final request = http.MultipartRequest('POST', Uri.parse(uploadUrl))
+      ..fields['fileName'] = 'house_$houseId.jpg'
+      ..fields['folder'] = '/houzy_worker_uploads'
+      ..fields['useUniqueFileName'] = 'true'
+      ..files.add(await http.MultipartFile.fromPath('file', image.path))
+      ..headers['Authorization'] = 'Basic $privateKey';
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final response = await request.send();
+    if (response.statusCode == 200) {
+      final respStr = await response.stream.bytesToString();
+      final data = json.decode(respStr);
+      print('Image uploaded to: ${data['url']}');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Uploaded to: ${data['url']}")),
+      );
+    } else {
+      print('Upload failed: ${response.statusCode}');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Image upload failed")),
+      );
+    }
+  }
+
+  void _showImageSourcePicker(String houseId) {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(right: 62),
-                child: SizedBox(
-                  width: 130,
-                  height: 45,
-                  child: Image.asset("assets/images/houzylogoimage.png"),
-                ),
-              ),
-              IconButton(
-                icon: Image.asset('assets/images/notebook.png', height: 24),
-                onPressed: () {},
-              ),
-              IconButton(
-                icon: const Icon(Icons.shopping_cart),
-                onPressed: () {},
-              ),
-              GestureDetector(
-                onTap: () {},
-                child: CircleAvatar(
-                  radius: 18,
-                  backgroundImage: user?.photoURL != null
-                      ? NetworkImage(user!.photoURL!)
-                      : const AssetImage('assets/images/placeholder.png') as ImageProvider,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 3),
-          const Text(
-            "Professional",
-            style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
-          ),
-          const Text(
-            "House Cleaning",
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Color(0XFFF54A00),
-            ),
-          ),
-          Row(
-            children: const [
-              Text(
-                "Service You Can ",
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              Text(
-                "Trust",
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Color.fromARGB(255, 34, 255, 96),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            "Book trusted, top-rated cleaners in your area. Flexible scheduling, eco-friendly products, and 100% satisfaction guaranteed.",
-            style: TextStyle(color: Colors.black54, fontSize: 12),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              Container(
-                width: 130,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(6),
-                  color: Color(0xFFE6F4EA),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 7),
-                child: Row(
-                  children: [
-                    Icon(Icons.verified_user, color: Color(0XFFF54A00), size: 13),
-                    SizedBox(width: 2),
-                    Flexible(
-                      child: Text("Insured & Bonded", style: TextStyle(fontSize: 9, color: Colors.black54), overflow: TextOverflow.ellipsis),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(width: 15),
-              Container(
-                width: 150,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(6),
-                  color: Color(0xFFE6F4EA),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 7),
-                child: Row(
-                  children: [
-                    Icon(Icons.star, color: Color(0XFFF54A00), size: 14),
-                    SizedBox(width: 2),
-                    Flexible(
-                      child: Text("4.9★ Avgerage Rating", style: TextStyle(fontSize: 9, color: Colors.black54), overflow: TextOverflow.ellipsis),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Container(
-                width: 140,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(6),
-                  color: Color(0xFFE6F4EA),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 7),
-                child: Row(
-                  children: [
-                    Icon(Icons.flash_on, color: Color(0XFFF54A00), size: 13),
-                    SizedBox(width: 2),
-                    Flexible(
-                      child: Text("Same Day Booking", style: TextStyle(fontSize: 9, color: Colors.black54), overflow: TextOverflow.ellipsis),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.asset(
-              'assets/images/servicesimage.png',
-              fit: BoxFit.cover,
-              width: double.infinity,
-            ),
-          ),
+          ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Open Camera'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage('camera', houseId);
+              }),
+          ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Choose from Gallery'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage('gallery', houseId);
+              }),
         ],
       ),
     );
   }
 
+  List<Map<String, String>> assignedHouses = [
+    {'id': '001', 'address': 'Villa 21, Palm Jumeirah'},
+    {'id': '002', 'address': 'Apartment 9B, Downtown Dubai'},
+  ];
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildTopHeader(context),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 20),
-                child: Text(
-                  "Choose Your Cleaning Service",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16.0),
-                child: Text("Select the perfect cleaning service for your needs"),
-              ),
-              const SizedBox(height: 30),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16.0),
-                child: Text(
-                  "What Our Customers Say",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Column(
-                  children: testimonials.map((t) => _TestimonialCard(
-                    name: t['name'],
-                    text: t['text'],
-                    stars: t['stars'],
-                  )).toList(),
-                ),
-              ),
-              const SizedBox(height: 30),
-              const Center(
-                child: Column(
-                  children: [
-                    ElevatedButton(onPressed: null, child: Text("Add Image")),
-                    SizedBox(height: 10),
-                    ElevatedButton(onPressed: null, child: Text("Upload Images")),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 30),
-              Center(
-                child: Column(
-                  children: const [
-                    Text("Houzy", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.orange)),
-                    Text("Professional cleaning services you can trust"),
-                    SizedBox(height: 8),
-                    Text("Privacy Policy    Terms of Service    Contact Us", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                    SizedBox(height: 20),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+      appBar: AppBar(
+        title: const Text('Houzy Worker Home'),
       ),
-    );
-  }
-}
-
-class _TestimonialCard extends StatelessWidget {
-  final String name;
-  final String text;
-  final int stars;
-
-  const _TestimonialCard({
-    required this.name,
-    required this.text,
-    required this.stars,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: List.generate(stars, (_) => const Icon(Icons.star, color: Colors.amber, size: 16)),
+      body: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: assignedHouses.length,
+        itemBuilder: (context, index) {
+          final house = assignedHouses[index];
+          return Card(
+            elevation: 4,
+            margin: const EdgeInsets.only(bottom: 16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: ListTile(
+              leading: const Icon(Icons.home, size: 40),
+              title: Text('Assigned House: ${house['address']}'),
+              subtitle: Text('ID: ${house['id']}'),
+              trailing: ElevatedButton(
+                onPressed: () => _showImageSourcePicker(house['id']!),
+                child: const Text('Upload Pic'),
+              ),
             ),
-            const SizedBox(height: 8),
-            Text('"$text"'),
-            const SizedBox(height: 8),
-            Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
