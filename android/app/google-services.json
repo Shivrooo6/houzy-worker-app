@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "507138808114",
+    "project_id": "houzy-7f021",
+    "storage_bucket": "houzy-7f021.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:507138808114:android:bd3656188549bb96e99f2b",
+        "android_client_info": {
+          "package_name": "com.example.houzy"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "507138808114-6n6r327p1vth8u486ulhtqefmoqljc18.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.houzy",
+            "certificate_hash": "d6760af87ccb266610468a4dc923b8fd449dc3ea"
+          }
+        },
+        {
+          "client_id": "507138808114-qdlcjedg555v4dd1q4qc9c39liron5na.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCUClhHsM74cT-yhlDEVdW8BRq6GYmFHEU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "507138808114-qdlcjedg555v4dd1q4qc9c39liron5na.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
