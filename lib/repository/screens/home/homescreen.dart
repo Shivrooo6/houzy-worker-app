@@ -41,10 +41,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.pop(context);
                 final status = await Permission.camera.request();
                 if (!status.isGranted) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Camera permission denied")));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Camera permission denied")),
+                  );
                   return;
                 }
                 final pickedFile = await _picker.pickImage(source: ImageSource.camera);
+                if (pickedFile != null) {
+                  setState(() => selectedImage = File(pickedFile.path));
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Choose from gallery'),
+              onTap: () async {
+                Navigator.pop(context);
+                final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
                 if (pickedFile != null) {
                   setState(() => selectedImage = File(pickedFile.path));
                 }
@@ -100,7 +113,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String _formatDate(dynamic date) {
     if (date == null) return "Not set";
     final ts = date as Timestamp;
-    return "${ts.toDate().day}/${ts.toDate().month}/${ts.toDate().year}";
+    final dt = ts.toDate();
+    return "${dt.day}/${dt.month}/${dt.year}";
   }
 
   Widget buildHeader() {
@@ -167,7 +181,16 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Column(
         children: [
           buildHeader(),
-          const SizedBox(height: 8),
+          Row(
+            children: [
+              const SizedBox(width: 16),
+              const Text("Show only today's bookings"),
+              Switch(
+                value: showOnlyToday,
+                onChanged: (value) => setState(() => showOnlyToday = value),
+              ),
+            ],
+          ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
@@ -189,6 +212,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   itemCount: filteredBookings.length,
                   itemBuilder: (context, index) {
                     final booking = filteredBookings[index];
+                    final data = booking.data() as Map<String, dynamic>;
+
                     return Card(
                       margin: const EdgeInsets.all(10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -197,13 +222,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text("Date: ${_formatDate(booking['date'])}",
+                            Text("📅 Date: ${_formatDate(data['date'])}",
                                 style: const TextStyle(fontWeight: FontWeight.bold)),
-                            Text("Time: ${booking['timeSlot']}"),
-                            Text("Duration: ${booking['duration']}"),
-                            Text("Workers: ${booking['workers']}"),
-                            Text("Pet Friendly: ${booking['isPetFriendly'] ? 'Yes' : 'No'}"),
-                            Text("Instructions: ${booking['instructions']}"),
+                            Text("⏰ Time: ${data['timeSlot']}"),
+                            Text("🧹 Duration: ${data['duration']}"),
+                            Text("👷‍♂️ Workers: ${data['workers']}"),
+                            Text("🐾 Pet Friendly: ${data['isPetFriendly'] ? 'Yes' : 'No'}"),
+                            Text("📝 Instructions: ${data['instructions']}"),
+                            if (data.containsKey('subscriptionPlan'))
+                              Text("📦 Subscription: ${data['subscriptionPlan']}"),
                             const SizedBox(height: 10),
                             ElevatedButton(
                               onPressed: pickImage,

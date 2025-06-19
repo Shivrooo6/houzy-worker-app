@@ -28,6 +28,7 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => isLoading = true);
 
     try {
+      print("Trying to log in with: $empId"); // Add this
       final doc = await FirebaseFirestore.instance.collection('employees').doc(empId).get();
 
       if (!doc.exists) {
