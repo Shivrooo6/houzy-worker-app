@@ -15,16 +15,17 @@ class BottomNavScreen extends StatefulWidget {
 class _BottomNavScreenState extends State<BottomNavScreen> {
   late int currentIndex;
 
+  /// Asset names (make sure these PNGs exist in assets/images/)
   final List<String> icons = [
     "house.png",
     "user.png",
-    "circle-help.png"
+    "circle-help.png",
   ];
 
   final List<String> labels = [
     "Home",
     "Account",
-    "Help"
+    "Help",
   ];
 
   late final List<Widget> pages;
@@ -32,12 +33,15 @@ class _BottomNavScreenState extends State<BottomNavScreen> {
   @override
   void initState() {
     super.initState();
-    currentIndex = widget.initialIndex;
 
-    pages = [
-      const HomeScreen(),
-      const AccountScreen(),
-      const HelpScreen(),
+    /// Clamp initialIndex just in case
+    currentIndex =
+        widget.initialIndex.clamp(0, icons.length - 1); // keeps it in range
+
+    pages = const [
+      HomeScreen(),
+      AccountScreen(),
+      HelpScreen(),
     ];
   }
 
@@ -45,14 +49,15 @@ class _BottomNavScreenState extends State<BottomNavScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      // Use Stack to allow floating nav bar
       body: Stack(
         children: [
+          /// Main content
           IndexedStack(
             index: currentIndex,
             children: pages,
           ),
-          // Floating NavBar Positioned
+
+          /// Floating nav bar
           Positioned(
             left: 20,
             right: 20,
@@ -62,7 +67,7 @@ class _BottomNavScreenState extends State<BottomNavScreen> {
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(30),
-                boxShadow: [
+                boxShadow: const [
                   BoxShadow(
                     color: Colors.black12,
                     blurRadius: 10,
@@ -81,12 +86,10 @@ class _BottomNavScreenState extends State<BottomNavScreen> {
                   unselectedItemColor: Colors.grey,
                   showUnselectedLabels: true,
                   onTap: (index) {
-                    setState(() {
-                      currentIndex = index;
-                    });
+                    setState(() => currentIndex = index);
                   },
-                  items: List.generate(5, (index) {
-                    bool isSelected = index == currentIndex;
+                  items: List.generate(icons.length, (index) {
+                    final isSelected = index == currentIndex;
                     final imagePath = 'assets/images/${icons[index]}';
 
                     return BottomNavigationBarItem(
@@ -94,10 +97,11 @@ class _BottomNavScreenState extends State<BottomNavScreen> {
                         imagePath,
                         width: isSelected ? 28 : 24,
                         height: isSelected ? 28 : 24,
-                        color: isSelected ? const Color(0XFFF54A00) : Colors.grey,
-                        errorBuilder: (context, error, stackTrace) {
-                          return const Icon(Icons.error, color: Colors.red);
-                        },
+                        color: isSelected
+                            ? const Color(0XFFF54A00)
+                            : Colors.grey,
+                        errorBuilder: (_, __, ___) =>
+                            const Icon(Icons.error, color: Colors.red),
                       ),
                       label: labels[index],
                     );

@@ -1,9 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -14,168 +18,225 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final ImagePicker _picker = ImagePicker();
-  File? _image;
+  File? selectedImage;
+  bool showOnlyToday = false;
 
-  // Replace with your actual ImageKit private API key (DO NOT share this in public apps)
-  static const String _imageKitPrivateKey = 'private_yAss1el231dUVKnmNcqEvjC0Mt0=';
-  // Note: This key is just a placeholder. Use your actual ImageKit private key.
+  final String imageKitUploadUrl = "https://upload.imagekit.io/api/v1/files/upload";
+  final String imageKitPublicKey = "public_5IFyWDvjUjnWuGDkuaMN7LMJm4E=";
+  final String imageKitPrivateKey = "private_yAss1el231dUVKnmNcqEvjC0Mt0=";
 
-  // Sample assigned house data
-  List<Map<String, String>> assignedHouses = [
-    {
-      'id': '001',
-      'address': 'Villa 21, Palm Jumeirah',
-      'date': '2025-06-17',
-      'timeSlot': '10:00 AM - 12:00 PM'
-    },
-    {
-      'id': '002',
-      'address': 'Apartment 9B, Downtown Dubai',
-      'date': '2025-06-17',
-      'timeSlot': '2:00 PM - 4:00 PM'
-    },
-  ];
-
-  // Show image source picker (camera or gallery)
-  void _showImageSourcePicker(String houseId) {
+  Future<void> pickImage() async {
     showModalBottomSheet(
       context: context,
-      builder: (_) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.camera_alt),
-            title: const Text('Open Camera'),
-            onTap: () {
-              Navigator.pop(context);
-              _pickImage('camera', houseId);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.photo_library),
-            title: const Text('Choose from Gallery'),
-            onTap: () {
-              Navigator.pop(context);
-              _pickImage('gallery', houseId);
-            },
-          ),
-        ],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Take a photo'),
+              onTap: () async {
+                Navigator.pop(context);
+                final status = await Permission.camera.request();
+                if (!status.isGranted) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Camera permission denied")));
+                  return;
+                }
+                final pickedFile = await _picker.pickImage(source: ImageSource.camera);
+                if (pickedFile != null) {
+                  setState(() => selectedImage = File(pickedFile.path));
+                }
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  // Pick image from camera or gallery
-  Future<void> _pickImage(String source, String houseId) async {
-    final PermissionStatus cameraPermission = await Permission.camera.request();
-    final PermissionStatus storagePermission = await Permission.photos.request();
+  Future<void> uploadImage(File imageFile) async {
+    try {
+      final request = http.MultipartRequest('POST', Uri.parse(imageKitUploadUrl));
+      request.fields['fileName'] = 'worker_upload.jpg';
+      request.fields['publicKey'] = imageKitPublicKey;
+      request.fields['useUniqueFileName'] = 'true';
 
-    if (cameraPermission.isGranted && storagePermission.isGranted) {
-      final pickedFile = await _picker.pickImage(
-        source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'file',
+          imageFile.path,
+          contentType: MediaType('image', 'jpeg'),
+        ),
       );
 
-      if (pickedFile != null) {
-        setState(() {
-          _image = File(pickedFile.path);
-        });
+      final auth = base64Encode(utf8.encode('$imageKitPrivateKey:'));
+      request.headers['Authorization'] = 'Basic $auth';
 
-        await _uploadToImageKit(File(pickedFile.path), houseId);
+      final response = await request.send();
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ Image uploaded")));
+        setState(() => selectedImage = null);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("❌ Upload failed: ${response.statusCode}")),
+        );
       }
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Camera or gallery permission denied")),
-      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     }
   }
 
-  // Upload to ImageKit
-  Future<void> _uploadToImageKit(File image, String houseId) async {
-    const String uploadUrl = 'https://upload.imagekit.io/api/v1/files/upload';
-    final String authHeader = 'Basic ${base64Encode(utf8.encode('$_imageKitPrivateKey:'))}';
+  bool isTodayBooking(Timestamp timestamp) {
+    final bookingDate = timestamp.toDate();
+    final now = DateTime.now();
+    return bookingDate.year == now.year &&
+        bookingDate.month == now.month &&
+        bookingDate.day == now.day;
+  }
 
-    final request = http.MultipartRequest('POST', Uri.parse(uploadUrl))
-      ..fields['fileName'] = 'house_$houseId.jpg'
-      ..fields['folder'] = '/houzy_worker_uploads'
-      ..fields['useUniqueFileName'] = 'true'
-      ..files.add(await http.MultipartFile.fromPath('file', image.path))
-      ..headers['Authorization'] = authHeader;
+  String _formatDate(dynamic date) {
+    if (date == null) return "Not set";
+    final ts = date as Timestamp;
+    return "${ts.toDate().day}/${ts.toDate().month}/${ts.toDate().year}";
+  }
 
-    final response = await request.send();
+  Widget buildHeader() {
+    final user = FirebaseAuth.instance.currentUser;
 
-    if (response.statusCode == 200) {
-      final responseBody = await response.stream.bytesToString();
-      final data = json.decode(responseBody);
-      final imageUrl = data['url'];
-      print('Image uploaded: $imageUrl');
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Uploaded: $imageUrl")),
-      );
-    } else {
-      print('Upload failed: ${response.statusCode}');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Image upload failed")),
+    if (user == null || user.uid.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Text("⚠️ User not logged in", style: TextStyle(color: Colors.red)),
       );
     }
+
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance.collection('employees').doc(user.uid).get(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.all(16),
+            child: CircularProgressIndicator(),
+          );
+        }
+
+        if (!snapshot.hasData || !snapshot.data!.exists) {
+          return const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text("⚠️ Employee record not found", style: TextStyle(color: Colors.red)),
+          );
+        }
+
+        final data = snapshot.data!.data() as Map<String, dynamic>;
+        final name = data['name'] ?? 'Unknown';
+        final employeeId = data['employeeId'] ?? 'N/A';
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 40, 16, 10),
+          child: Row(
+            children: [
+              Image.asset('assets/images/houzylogoimage.png', height: 40),
+              const Spacer(),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text('ID: $employeeId', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                ],
+              ),
+              const SizedBox(width: 12),
+              CircleAvatar(
+                radius: 18,
+                backgroundImage: user.photoURL != null
+                    ? NetworkImage(user.photoURL!)
+                    : const AssetImage('assets/images/placeholder.png') as ImageProvider,
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Houzy Worker Home'),
-      ),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: assignedHouses.length,
-        itemBuilder: (context, index) {
-          final house = assignedHouses[index];
-          return Card(
-            elevation: 4,
-            margin: const EdgeInsets.only(bottom: 16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.home, size: 40),
-                      const SizedBox(width: 10),
-                      Expanded(
+      body: Column(
+        children: [
+          buildHeader(),
+          const SizedBox(height: 8),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('bookings')
+                  .orderBy('timestamp', descending: true)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting)
+                  return const Center(child: CircularProgressIndicator());
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty)
+                  return const Center(child: Text("No bookings available"));
+
+                final bookings = snapshot.data!.docs;
+                final filteredBookings = showOnlyToday
+                    ? bookings.where((doc) => isTodayBooking(doc['date'])).toList()
+                    : bookings;
+
+                return ListView.builder(
+                  itemCount: filteredBookings.length,
+                  itemBuilder: (context, index) {
+                    final booking = filteredBookings[index];
+                    return Card(
+                      margin: const EdgeInsets.all(10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              house['address'] ?? '',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
+                            Text("Date: ${_formatDate(booking['date'])}",
+                                style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text("Time: ${booking['timeSlot']}"),
+                            Text("Duration: ${booking['duration']}"),
+                            Text("Workers: ${booking['workers']}"),
+                            Text("Pet Friendly: ${booking['isPetFriendly'] ? 'Yes' : 'No'}"),
+                            Text("Instructions: ${booking['instructions']}"),
+                            const SizedBox(height: 10),
+                            ElevatedButton(
+                              onPressed: pickImage,
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                              child: const Text("Upload Work Image"),
                             ),
-                            Text('ID: ${house['id']}'),
-                            Text('Date: ${house['date']}'),
-                            Text('Time: ${house['timeSlot']}'),
+                            if (selectedImage != null) ...[
+                              const SizedBox(height: 12),
+                              const Text("Preview Selected Image:",
+                                  style: TextStyle(fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 8),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.file(selectedImage!, height: 200),
+                              ),
+                              const SizedBox(height: 10),
+                              ElevatedButton.icon(
+                                onPressed: () => uploadImage(selectedImage!),
+                                icon: const Icon(Icons.cloud_upload),
+                                label: const Text("Upload Now"),
+                                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                              ),
+                            ]
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: ElevatedButton.icon(
-                      onPressed: () => _showImageSourcePicker(house['id']!),
-                      icon: const Icon(Icons.upload),
-                      label: const Text('Upload Pic'),
-                    ),
-                  ),
-                ],
-              ),
+                    );
+                  },
+                );
+              },
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }
