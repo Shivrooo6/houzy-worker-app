@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:houzy/repository/screens/bottomnav/bottomnavscreen.dart';
 import 'package:houzy/repository/widgets/uihelper.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,6 +16,24 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _employeePasswordController = TextEditingController();
 
   bool isLoading = false;
+  bool _obscurePassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkIfAlreadyLoggedIn();
+  }
+
+  Future<void> _checkIfAlreadyLoggedIn() async {
+    final prefs = await SharedPreferences.getInstance();
+    final empId = prefs.getString('employeeId');
+    if (empId != null && empId.isNotEmpty) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const BottomNavScreen()),
+      );
+    }
+  }
 
   Future<void> _handleEmployeeLogin() async {
     final empId = _employeeIdController.text.trim();
@@ -28,29 +47,34 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => isLoading = true);
 
     try {
-      print("Trying to log in with: $empId"); // Add this
-      final doc = await FirebaseFirestore.instance.collection('employees').doc(empId).get();
+      final DocumentSnapshot doc = await FirebaseFirestore.instance
+          .collection('employee')
+          .doc(empId)
+          .get();
 
       if (!doc.exists) {
         _showError("Employee ID not found.");
         return;
       }
 
-      final data = doc.data()!;
-      final correctPassword = data['password'];
+      final data = doc.data() as Map<String, dynamic>;
+      final storedPassword = data['password'];
 
-      if (password == correctPassword) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => const BottomNavScreen(),
-          ),
-        );
-      } else {
+      if (password != storedPassword) {
         _showError("Incorrect password.");
+        return;
       }
+
+      // ✅ Save login session
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('employeeId', empId);
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const BottomNavScreen()),
+      );
     } catch (e) {
-      _showError("Login failed: ${e.toString()}");
+      _showError("Login failed. Please try again.");
     } finally {
       setState(() => isLoading = false);
     }
@@ -85,23 +109,39 @@ class _LoginScreenState extends State<LoginScreen> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
           ElevatedButton(
             onPressed: () async {
               if (empId.isEmpty || newPassword.isEmpty) {
-                _showError("All fields required.");
+                _showError("All fields are required.");
                 return;
               }
+
               try {
-                await FirebaseFirestore.instance.collection('employees').doc(empId).update({
-                  'password': newPassword,
-                });
+                final doc = await FirebaseFirestore.instance
+                    .collection('employee')
+                    .doc(empId)
+                    .get();
+
+                if (!doc.exists) {
+                  _showError("Employee ID not found.");
+                  return;
+                }
+
+                await FirebaseFirestore.instance
+                    .collection('employee')
+                    .doc(empId)
+                    .update({'password': newPassword});
+
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text("Password updated successfully")),
                 );
               } catch (e) {
-                _showError("Error resetting password.");
+                _showError("Failed to reset password.");
               }
             },
             child: const Text("Update"),
@@ -130,26 +170,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     height: 80,
                     child: UiHelper.CustomImage(img: "houzylogoimage.png"),
                   ),
-                  const Positioned(
-                    top: -2,
-                    left: 12,
-                    child: Icon(Icons.star, color: Color(0xFFFE600E), size: 18),
-                  ),
-                  const Positioned(
-                    top: -3,
-                    right: 20,
-                    child: Icon(Icons.star, color: Color(0xFFFE600E), size: 20),
-                  ),
-                  const Positioned(
-                    bottom: 0,
-                    left: 0,
-                    child: Icon(Icons.star, color: Color(0xFFFE600E), size: 16),
-                  ),
-                  const Positioned(
-                    bottom: 0,
-                    right: 10,
-                    child: Icon(Icons.star, color: Color(0xFFFE600E), size: 14),
-                  ),
+                  const Positioned(top: -2, left: 12, child: Icon(Icons.star, color: Color(0xFFFE600E), size: 18)),
+                  const Positioned(top: -3, right: 20, child: Icon(Icons.star, color: Color(0xFFFE600E), size: 20)),
+                  const Positioned(bottom: 0, left: 0, child: Icon(Icons.star, color: Color(0xFFFE600E), size: 16)),
+                  const Positioned(bottom: 0, right: 10, child: Icon(Icons.star, color: Color(0xFFFE600E), size: 14)),
                 ],
               ),
               const SizedBox(height: 10),
@@ -198,11 +222,21 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 8),
                         TextField(
                           controller: _employeePasswordController,
-                          decoration: const InputDecoration(
+                          obscureText: _obscurePassword,
+                          decoration: InputDecoration(
                             labelText: "Password",
-                            prefixIcon: Icon(Icons.lock),
+                            prefixIcon: const Icon(Icons.lock),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _obscurePassword = !_obscurePassword;
+                                });
+                              },
+                            ),
                           ),
-                          obscureText: true,
                         ),
                         Align(
                           alignment: Alignment.centerRight,
@@ -217,13 +251,13 @@ class _LoginScreenState extends State<LoginScreen> {
                           width: double.infinity,
                           child: ElevatedButton(
                             onPressed: isLoading ? null : _handleEmployeeLogin,
-                            child: isLoading
-                                ? const CircularProgressIndicator(color: Colors.white)
-                                : const Text("Login", style: TextStyle(fontWeight: FontWeight.bold)),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFFFE600E),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                             ),
+                            child: isLoading
+                                ? const CircularProgressIndicator(color: Colors.white)
+                                : const Text("Login", style: TextStyle(fontWeight: FontWeight.bold)),
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -232,15 +266,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             text: 'By continuing, you agree to our ',
                             style: const TextStyle(fontSize: 12),
                             children: [
-                              TextSpan(
-                                text: 'T&C',
-                                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black),
-                              ),
+                              TextSpan(text: 'T&C', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
                               const TextSpan(text: ' and '),
-                              TextSpan(
-                                text: 'Privacy',
-                                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black),
-                              ),
+                              TextSpan(text: 'Privacy', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
                               const TextSpan(text: ' policy.'),
                             ],
                           ),

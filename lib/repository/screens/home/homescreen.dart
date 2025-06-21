@@ -1,12 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -20,52 +20,49 @@ class _HomeScreenState extends State<HomeScreen> {
   File? selectedImage;
   bool showOnlyToday = false;
 
+  String? employeeId;
+  String? name;
+  String? profileImageUrl;
+
   final String imageKitUploadUrl = "https://upload.imagekit.io/api/v1/files/upload";
   final String imageKitPublicKey = "public_5IFyWDvjUjnWuGDkuaMN7LMJm4E=";
   final String imageKitPrivateKey = "private_yAss1el231dUVKnmNcqEvjC0Mt0=";
 
+  @override
+  void initState() {
+    super.initState();
+    _loadEmployeeInfo();
+  }
+
+  Future<void> _loadEmployeeInfo() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final empId = prefs.getString('employeeId');
+
+      if (empId == null) return;
+
+      final doc = await FirebaseFirestore.instance.collection('employees').doc(empId).get();
+
+      if (!doc.exists) return;
+
+      final data = doc.data();
+      if (data == null) return;
+
+      setState(() {
+        employeeId = empId;
+        name = data['name'];
+        profileImageUrl = data['profileImage'] ?? '';
+      });
+    } catch (e) {
+      print("Error loading employee info: $e");
+    }
+  }
+
   Future<void> pickImage() async {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('Take a photo'),
-              onTap: () async {
-                Navigator.pop(context);
-                final status = await Permission.camera.request();
-                if (!status.isGranted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Camera permission denied")),
-                  );
-                  return;
-                }
-                final pickedFile = await _picker.pickImage(source: ImageSource.camera);
-                if (pickedFile != null) {
-                  setState(() => selectedImage = File(pickedFile.path));
-                }
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Choose from gallery'),
-              onTap: () async {
-                Navigator.pop(context);
-                final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
-                if (pickedFile != null) {
-                  setState(() => selectedImage = File(pickedFile.path));
-                }
-              },
-            ),
-          ],
-        ),
-      ),
-    );
+    final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
+    if (pickedFile != null) {
+      setState(() => selectedImage = File(pickedFile.path));
+    }
   }
 
   Future<void> uploadImage(File imageFile) async {
@@ -74,103 +71,99 @@ class _HomeScreenState extends State<HomeScreen> {
       request.fields['fileName'] = 'worker_upload.jpg';
       request.fields['publicKey'] = imageKitPublicKey;
       request.fields['useUniqueFileName'] = 'true';
-
-      request.files.add(
-        await http.MultipartFile.fromPath(
-          'file',
-          imageFile.path,
-          contentType: MediaType('image', 'jpeg'),
-        ),
-      );
+      request.files.add(await http.MultipartFile.fromPath(
+        'file', imageFile.path, contentType: MediaType('image', 'jpeg')));
 
       final auth = base64Encode(utf8.encode('$imageKitPrivateKey:'));
       request.headers['Authorization'] = 'Basic $auth';
 
       final response = await request.send();
-
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ Image uploaded")));
         setState(() => selectedImage = null);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("❌ Upload failed: ${response.statusCode}")),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("❌ Upload failed")));
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      print("Upload error: $e");
     }
   }
 
-  bool isTodayBooking(Timestamp timestamp) {
-    final bookingDate = timestamp.toDate();
-    final now = DateTime.now();
-    return bookingDate.year == now.year &&
-        bookingDate.month == now.month &&
-        bookingDate.day == now.day;
+  void _showProfileDrawer() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 16),
+          CircleAvatar(
+            radius: 40,
+            backgroundImage: (profileImageUrl != null && profileImageUrl!.isNotEmpty)
+                ? NetworkImage(profileImageUrl!)
+                : const AssetImage('assets/images/placeholder.png') as ImageProvider,
+          ),
+          const SizedBox(height: 8),
+          Text(name ?? 'No name', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          Text('ID: $employeeId', style: const TextStyle(color: Colors.grey)),
+          const Divider(height: 30),
+          ListTile(
+            leading: const Icon(Icons.person),
+            title: const Text("Profile"),
+            onTap: () {
+              Navigator.pop(context);
+              // TODO: Navigate to Profile Screen
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.logout, color: Colors.red),
+            title: const Text("Sign Out", style: TextStyle(color: Colors.red)),
+            onTap: () async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.remove('employeeId');
+              if (!mounted) return;
+              Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+            },
+          ),
+          const SizedBox(height: 10),
+        ],
+      ),
+    );
   }
 
-  String _formatDate(dynamic date) {
-    if (date == null) return "Not set";
-    final ts = date as Timestamp;
+  String _formatDate(Timestamp? ts) {
+    if (ts == null) return '';
     final dt = ts.toDate();
     return "${dt.day}/${dt.month}/${dt.year}";
   }
 
+  bool isTodayBooking(Timestamp timestamp) {
+    final date = timestamp.toDate();
+    final now = DateTime.now();
+    return date.year == now.year && date.month == now.month && date.day == now.day;
+  }
+
   Widget buildHeader() {
-    final user = FirebaseAuth.instance.currentUser;
-
-    if (user == null || user.uid.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Text("⚠️ User not logged in", style: TextStyle(color: Colors.red)),
-      );
-    }
-
-    return FutureBuilder<DocumentSnapshot>(
-      future: FirebaseFirestore.instance.collection('employees').doc(user.uid).get(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Padding(
-            padding: EdgeInsets.all(16),
-            child: CircularProgressIndicator(),
-          );
-        }
-
-        if (!snapshot.hasData || !snapshot.data!.exists) {
-          return const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text("⚠️ Employee record not found", style: TextStyle(color: Colors.red)),
-          );
-        }
-
-        final data = snapshot.data!.data() as Map<String, dynamic>;
-        final name = data['name'] ?? 'Unknown';
-        final employeeId = data['employeeId'] ?? 'N/A';
-
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 40, 16, 10),
-          child: Row(
-            children: [
-              Image.asset('assets/images/houzylogoimage.png', height: 40),
-              const Spacer(),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  Text('ID: $employeeId', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              ),
-              const SizedBox(width: 12),
-              CircleAvatar(
-                radius: 18,
-                backgroundImage: user.photoURL != null
-                    ? NetworkImage(user.photoURL!)
-                    : const AssetImage('assets/images/placeholder.png') as ImageProvider,
-              ),
-            ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 40, 16, 10),
+      child: Row(
+        children: [
+          Image.asset('assets/images/houzylogoimage.png', height: 40),
+          const Spacer(),
+          GestureDetector(
+            onTap: _showProfileDrawer,
+            child: CircleAvatar(
+              radius: 20,
+              backgroundImage: (profileImageUrl != null && profileImageUrl!.isNotEmpty)
+                  ? NetworkImage(profileImageUrl!)
+                  : const AssetImage('assets/images/placeholder.png') as ImageProvider,
+            ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -186,7 +179,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const Text("Show only today's bookings"),
               Switch(
                 value: showOnlyToday,
-                onChanged: (value) => setState(() => showOnlyToday = value),
+                onChanged: (val) => setState(() => showOnlyToday = val),
               ),
             ],
           ),
@@ -197,22 +190,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   .orderBy('timestamp', descending: true)
                   .snapshots(),
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting)
+                if (!snapshot.hasData) {
                   return const Center(child: CircularProgressIndicator());
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty)
-                  return const Center(child: Text("No bookings available"));
+                }
 
-                final bookings = snapshot.data!.docs;
-                final filteredBookings = showOnlyToday
-                    ? bookings.where((doc) => isTodayBooking(doc['date'])).toList()
-                    : bookings;
+                final docs = snapshot.data!.docs;
+                final filtered = showOnlyToday
+                    ? docs.where((e) => isTodayBooking(e['date'])).toList()
+                    : docs;
 
                 return ListView.builder(
-                  itemCount: filteredBookings.length,
-                  itemBuilder: (context, index) {
-                    final booking = filteredBookings[index];
-                    final data = booking.data() as Map<String, dynamic>;
-
+                  itemCount: filtered.length,
+                  itemBuilder: (ctx, i) {
+                    final data = filtered[i].data() as Map<String, dynamic>;
                     return Card(
                       margin: const EdgeInsets.all(10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -221,15 +211,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text("📅 Date: ${_formatDate(data['date'])}",
-                                style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text("📅 Date: ${_formatDate(data['date'])}", style: const TextStyle(fontWeight: FontWeight.bold)),
                             Text("⏰ Time: ${data['timeSlot']}"),
                             Text("🧹 Duration: ${data['duration']}"),
                             Text("👷‍♂️ Workers: ${data['workers']}"),
-                            Text("🐾 Pet Friendly: ${data['isPetFriendly'] ? 'Yes' : 'No'}"),
+                            Text("🐾 Pet Friendly: ${data['isPetFriendly'] == true ? 'Yes' : 'No'}"),
                             Text("📝 Instructions: ${data['instructions']}"),
-                            if (data.containsKey('subscriptionPlan'))
-                              Text("📦 Subscription: ${data['subscriptionPlan']}"),
                             const SizedBox(height: 10),
                             ElevatedButton(
                               onPressed: pickImage,
@@ -237,13 +224,10 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: const Text("Upload Work Image"),
                             ),
                             if (selectedImage != null) ...[
-                              const SizedBox(height: 12),
-                              const Text("Preview Selected Image:",
-                                  style: TextStyle(fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
+                              const SizedBox(height: 10),
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
-                                child: Image.file(selectedImage!, height: 200),
+                                child: Image.file(selectedImage!, height: 150),
                               ),
                               const SizedBox(height: 10),
                               ElevatedButton.icon(
