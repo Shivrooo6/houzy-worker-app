@@ -1,12 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -48,10 +48,12 @@ class _HomeScreenState extends State<HomeScreen> {
       final data = doc.data();
       if (data == null) return;
 
-      setState(() {
-        employeeId = empId;
-        name = data['name'];
-        profileImageUrl = data['profileImage'] ?? '';
+      Future.microtask(() {
+        setState(() {
+          employeeId = empId;
+          name = data['name'];
+          profileImageUrl = data['profileImage'] ?? '';
+        });
       });
     } catch (e) {
       print("Error loading employee info: $e");
@@ -61,8 +63,26 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> pickImage() async {
     final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
-      setState(() => selectedImage = File(pickedFile.path));
+      final compressed = await compressImage(File(pickedFile.path));
+      if (compressed != null) {
+        setState(() => selectedImage = File(compressed.path));
+      } else {
+        setState(() => selectedImage = File(pickedFile.path)); // fallback
+      }
     }
+  }
+
+  Future<XFile?> compressImage(File file) async {
+    final dir = await Directory.systemTemp.createTemp();
+    final targetPath = '${dir.path}/temp_compressed.jpg';
+
+    final result = await FlutterImageCompress.compressAndGetFile(
+      file.absolute.path,
+      targetPath,
+      quality: 60,
+    );
+
+    return result;
   }
 
   Future<void> uploadImage(File imageFile) async {
@@ -72,7 +92,9 @@ class _HomeScreenState extends State<HomeScreen> {
       request.fields['publicKey'] = imageKitPublicKey;
       request.fields['useUniqueFileName'] = 'true';
       request.files.add(await http.MultipartFile.fromPath(
-        'file', imageFile.path, contentType: MediaType('image', 'jpeg')));
+        'file', imageFile.path,
+        contentType: MediaType('image', 'jpeg'),
+      ));
 
       final auth = base64Encode(utf8.encode('$imageKitPrivateKey:'));
       request.headers['Authorization'] = 'Basic $auth';
@@ -92,10 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showProfileDrawer() {
     showModalBottomSheet(
       context: context,
-      isScrollControlled: false,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -108,15 +127,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 8),
           Text(name ?? 'No name', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          Text('ID: $employeeId', style: const TextStyle(color: Colors.grey)),
+          Text('ID: ${employeeId ?? 'N/A'}', style: const TextStyle(color: Colors.grey)),
           const Divider(height: 30),
           ListTile(
             leading: const Icon(Icons.person),
             title: const Text("Profile"),
-            onTap: () {
-              Navigator.pop(context);
-              // TODO: Navigate to Profile Screen
-            },
+            onTap: () => Navigator.pop(context),
           ),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),
@@ -147,8 +163,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 40, 16, 10),
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.orange, Color.fromARGB(255, 255, 187, 0)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 10)],
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 40, 16, 20),
       child: Row(
         children: [
           Image.asset('assets/images/houzylogoimage.png', height: 40),
@@ -156,10 +180,14 @@ class _HomeScreenState extends State<HomeScreen> {
           GestureDetector(
             onTap: _showProfileDrawer,
             child: CircleAvatar(
-              radius: 20,
-              backgroundImage: (profileImageUrl != null && profileImageUrl!.isNotEmpty)
-                  ? NetworkImage(profileImageUrl!)
-                  : const AssetImage('assets/images/placeholder.png') as ImageProvider,
+              radius: 22,
+              backgroundColor: Colors.white,
+              child: CircleAvatar(
+                radius: 20,
+                backgroundImage: (profileImageUrl != null && profileImageUrl!.isNotEmpty)
+                    ? NetworkImage(profileImageUrl!)
+                    : const AssetImage('assets/images/placeholder.png') as ImageProvider,
+              ),
             ),
           ),
         ],
@@ -170,18 +198,29 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF1F3F6),
       body: Column(
         children: [
           buildHeader(),
-          Row(
-            children: [
-              const SizedBox(width: 16),
-              const Text("Show only today's bookings"),
-              Switch(
-                value: showOnlyToday,
-                onChanged: (val) => setState(() => showOnlyToday = val),
-              ),
-            ],
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("📋 Today's Bookings",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                Row(
+                  children: [
+                    const Text("Only Today", style: TextStyle(fontSize: 14)),
+                    Switch(
+                      value: showOnlyToday,
+                      activeColor: Colors.green,
+                      onChanged: (val) => setState(() => showOnlyToday = val),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
@@ -203,40 +242,82 @@ class _HomeScreenState extends State<HomeScreen> {
                   itemCount: filtered.length,
                   itemBuilder: (ctx, i) {
                     final data = filtered[i].data() as Map<String, dynamic>;
-                    return Card(
-                      margin: const EdgeInsets.all(10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 10,
+                            offset: const Offset(2, 4),
+                          )
+                        ],
+                      ),
                       child: Padding(
-                        padding: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.all(16),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text("📅 Date: ${_formatDate(data['date'])}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text("📅 Date: ${_formatDate(data['date'])}",
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                            const SizedBox(height: 4),
                             Text("⏰ Time: ${data['timeSlot']}"),
                             Text("🧹 Duration: ${data['duration']}"),
                             Text("👷‍♂️ Workers: ${data['workers']}"),
                             Text("🐾 Pet Friendly: ${data['isPetFriendly'] == true ? 'Yes' : 'No'}"),
-                            Text("📝 Instructions: ${data['instructions']}"),
-                            const SizedBox(height: 10),
-                            ElevatedButton(
-                              onPressed: pickImage,
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-                              child: const Text("Upload Work Image"),
-                            ),
-                            if (selectedImage != null) ...[
-                              const SizedBox(height: 10),
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Image.file(selectedImage!, height: 150),
-                              ),
-                              const SizedBox(height: 10),
-                              ElevatedButton.icon(
-                                onPressed: () => uploadImage(selectedImage!),
-                                icon: const Icon(Icons.cloud_upload),
-                                label: const Text("Upload Now"),
-                                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                              ),
-                            ]
+                            if (data.containsKey('instructions'))
+                              Text("📝 Instructions: ${data['instructions']}"),
+                            const SizedBox(height: 12),
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 300),
+                              child: selectedImage == null
+                                  ? ElevatedButton.icon(
+                                      key: const ValueKey("uploadButton"),
+                                      onPressed: pickImage,
+                                      icon: const Icon(Icons.photo_library),
+                                      label: const Text("Upload Work Image"),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.orangeAccent,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12)),
+                                      ),
+                                    )
+                                  : Column(
+                                      key: const ValueKey("previewImage"),
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(12),
+                                          child: Image.file(selectedImage!,
+                                              height: 150, fit: BoxFit.cover),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            ElevatedButton.icon(
+                                              onPressed: () => uploadImage(selectedImage!),
+                                              icon: const Icon(Icons.cloud_upload),
+                                              label: const Text("Upload Now"),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: Colors.green,
+                                                shape: RoundedRectangleBorder(
+                                                    borderRadius: BorderRadius.circular(10)),
+                                              ),
+                                            ),
+                                            IconButton(
+                                              onPressed: () => setState(() => selectedImage = null),
+                                              icon: const Icon(Icons.cancel, color: Colors.redAccent),
+                                            )
+                                          ],
+                                        )
+                                      ],
+                                    ),
+                            )
                           ],
                         ),
                       ),

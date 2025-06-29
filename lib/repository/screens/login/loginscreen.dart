@@ -1,8 +1,9 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:houzy/repository/screens/bottomnav/bottomnavscreen.dart';
 import 'package:houzy/repository/widgets/uihelper.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -47,32 +48,29 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => isLoading = true);
 
     try {
-      final DocumentSnapshot doc = await FirebaseFirestore.instance
-          .collection('employee')
-          .doc(empId)
-          .get();
-
-      if (!doc.exists) {
-        _showError("Employee ID not found.");
-        return;
-      }
-
-      final data = doc.data() as Map<String, dynamic>;
-      final storedPassword = data['password'];
-
-      if (password != storedPassword) {
-        _showError("Incorrect password.");
-        return;
-      }
-
-      // ✅ Save login session
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('employeeId', empId);
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const BottomNavScreen()),
+      final response = await http.post(
+        Uri.parse("https://houzy-ozer.vercel.app/api/v1/mobile/worker/login"),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'employeeId': empId,
+          'password': password,
+        }),
       );
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        // Save login session
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('employeeId', empId);
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const BottomNavScreen()),
+        );
+      } else {
+        _showError(data['message'] ?? "Invalid credentials.");
+      }
     } catch (e) {
       _showError("Login failed. Please try again.");
     } finally {
@@ -83,71 +81,6 @@ class _LoginScreenState extends State<LoginScreen> {
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: Colors.red),
-    );
-  }
-
-  void _handleForgotPassword() {
-    String empId = '';
-    String newPassword = '';
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Reset Password"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              onChanged: (value) => empId = value.trim(),
-              decoration: const InputDecoration(labelText: 'Employee ID'),
-            ),
-            TextField(
-              onChanged: (value) => newPassword = value.trim(),
-              decoration: const InputDecoration(labelText: 'New Password'),
-              obscureText: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (empId.isEmpty || newPassword.isEmpty) {
-                _showError("All fields are required.");
-                return;
-              }
-
-              try {
-                final doc = await FirebaseFirestore.instance
-                    .collection('employee')
-                    .doc(empId)
-                    .get();
-
-                if (!doc.exists) {
-                  _showError("Employee ID not found.");
-                  return;
-                }
-
-                await FirebaseFirestore.instance
-                    .collection('employee')
-                    .doc(empId)
-                    .update({'password': newPassword});
-
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Password updated successfully")),
-                );
-              } catch (e) {
-                _showError("Failed to reset password.");
-              }
-            },
-            child: const Text("Update"),
-          ),
-        ],
-      ),
     );
   }
 
@@ -238,13 +171,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                         ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton(
-                            onPressed: _handleForgotPassword,
-                            child: const Text("Forgot Password?"),
-                          ),
-                        ),
                         const SizedBox(height: 8),
                         SizedBox(
                           height: 48,
@@ -283,6 +209,7 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+      
     );
   }
 }
